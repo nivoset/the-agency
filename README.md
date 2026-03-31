@@ -44,10 +44,10 @@ Build the CLI:
 pnpm build
 ```
 
-Run the built CLI directly:
+Run the installed CLI directly:
 
 ```bash
-pnpm agency --help
+the-agency --help
 ```
 
 Smoke test the local build:
@@ -63,68 +63,68 @@ The smoke test rebuilds the project, prints CLI help, and runs `agencies list` a
 Show help:
 
 ```bash
-pnpm agency --help
+the-agency --help
 ```
 
 List registered agencies:
 
 ```bash
-pnpm agency agencies list
+the-agency agencies list
 ```
 
 Register a remote prompt repo and make it active:
 
 ```bash
-pnpm agency hire git@github.com:your-org/agency-prompts.git
+the-agency hire git@github.com:your-org/agency-prompts.git
 ```
 
 Register a local prompt directory and make it active:
 
 ```bash
-pnpm agency hire ../agency-prompts
+the-agency hire ../agency-prompts
 ```
 
 Switch the active agency:
 
 ```bash
-pnpm agency agencies use your-org-agency-prompts
+the-agency agencies use your-org-agency-prompts
 ```
 
 Browse the root of the active agency:
 
 ```bash
-pnpm agency
+the-agency
 ```
 
 Browse a folder inside the active agency:
 
 ```bash
-pnpm agency engineering
+the-agency engineering
 ```
 
 Resolve a specific prompt from selectors:
 
 ```bash
-pnpm agency engineering technical-writer
+the-agency engineering technical-writer
 ```
 
 Limit output fields when browsing or resolving:
 
 ```bash
-pnpm agency --fields name,description engineering technical-writer
+the-agency --fields name,description engineering technical-writer
 ```
 
 List local config values:
 
 ```bash
-pnpm agency config list
+the-agency config list
 ```
 
 Set and read a local config value:
 
 ```bash
-pnpm agency config set default_model gpt-5
-pnpm agency config get default_model
+the-agency config set default_model gpt-5
+the-agency config get default_model
 ```
 
 ## Local Data And Config Behavior
@@ -143,7 +143,7 @@ That directory contains:
 You can override the storage location with `AGENCY_HOME`:
 
 ```bash
-AGENCY_HOME="$HOME/.agency-dev" pnpm agency agencies list
+AGENCY_HOME="$HOME/.agency-dev" the-agency agencies list
 ```
 
 Behavior details:
@@ -177,25 +177,25 @@ The implementation also filters noise at the repo root, including hidden directo
 Use a prompt repo from git:
 
 ```bash
-pnpm agency hire git@github.com:your-org/agency-prompts.git
-pnpm agency engineering
-pnpm agency engineering technical-writer
+the-agency hire git@github.com:your-org/agency-prompts.git
+the-agency engineering
+the-agency engineering technical-writer
 ```
 
 Use a prompt repo from a local checkout while editing prompts:
 
 ```bash
-pnpm agency hire ../agency-prompts
-pnpm agency agencies list
-pnpm agency product product-manager
+the-agency hire ../agency-prompts
+the-agency agencies list
+the-agency product product-manager
 ```
 
 Store local defaults for your wrapper scripts:
 
 ```bash
-pnpm agency config set model gpt-5
-pnpm agency config set temperature 0.2
-pnpm agency config list
+the-agency config set model gpt-5
+the-agency config set temperature 0.2
+the-agency config list
 ```
 
 ## Development
@@ -229,12 +229,12 @@ pnpm test
 
 Lookup returns `No agency is active yet`:
 
-- run `pnpm agency hire <git-repo-or-local-dir>` first
-- or switch to an existing agency with `pnpm agency agencies use <agency-key>`
+- run `the-agency hire <git-repo-or-local-dir>` first
+- or switch to an existing agency with `the-agency agencies use <agency-key>`
 
 An agency key is rejected as unknown:
 
-- inspect valid keys with `pnpm agency agencies list`
+- inspect valid keys with `the-agency agencies list`
 - the key is derived from the repo path or repo URL tail and normalized to lowercase kebab-case
 
 A remote repo does not refresh:

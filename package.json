@@ -7,13 +7,14 @@
     "dist"
   ],
   "bin": {
-    "agency": "./dist/index.js"
+    "the-agency": "./dist/index.js"
   },
   "scripts": {
-    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.json",
+    "prebuild": "rimraf dist",
+    "build": "tsc -p tsconfig.json",
     "prepare": "pnpm build",
     "prepack": "pnpm build",
-    "agency": "node dist/index.js",
+    "the-agency": "node dist/index.js",
     "local:test": "pnpm build && node dist/index.js --help && node dist/index.js agencies list",
     "test": "pnpm build && node dist/test/run.js"
   },
@@ -25,6 +26,7 @@
     "@types/node": "^25.5.0",
     "commander": "^14.0.3",
     "git": "^0.1.5",
+    "rimraf": "^6.1.3",
     "typescript": "^6.0.2"
   }
 }

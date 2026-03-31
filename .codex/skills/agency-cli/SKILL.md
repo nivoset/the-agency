@@ -5,49 +5,56 @@ description: Load this skill when you need the exact agency agent for a task; it
 
 # Agency CLI
 
-Use this skill to work with the local `the-agency` CLI and choose the right prompt from an agency repository.
+Use this skill to work with the installed `the-agency` CLI and choose the right prompt from an agency repository.
 
 ## Quick Start
 
-Build the CLI before using it if `dist/` is missing or stale.
+Use the installed CLI first.
 
 ```powershell
-pnpm build
+the-agency --help
 ```
 
 Hire a repo or local prompt directory to make it active.
 
 ```powershell
-node dist/index.js hire <git-repo-or-local-folder>
+the-agency hire <git-repo-or-local-folder>
 ```
 
 List the root options for the active agency.
 
 ```powershell
-node dist/index.js
+the-agency
 ```
 
 Traverse into a subdepartment.
 
 ```powershell
-node dist/index.js <selector>
-node dist/index.js <selector> <selector>
+the-agency <selector>
+the-agency <selector> <selector>
 ```
 
 Request only selected metadata fields when the body is not needed.
 
 ```powershell
-node dist/index.js --fields name,description,color <selector>
+the-agency --fields name,description,color <selector>
 ```
 
 ## Workflow
 
-1. Ensure the CLI is built.
+1. Ensure the CLI is installed.
 2. Hire the target repo or local folder if no agency is active.
 3. Start with a root listing instead of guessing deep paths.
 4. Follow the returned `subdepartments` or `prompts` one level at a time.
 5. Resolve a single prompt only after the listing makes the choice clear.
 6. Use `--fields` for ranking or routing decisions; fetch full prompt content only when needed.
+
+If you are developing this repository locally, build first and run the compiled CLI directly.
+
+```powershell
+pnpm build
+node dist/index.js <selector>
+```
 
 ## Routing Guidance
 
@@ -62,11 +69,11 @@ Prefer explicit intent over vague wording.
 Use these patterns directly.
 
 ```powershell
-node dist/index.js hire fixtures/agency-agents-mirror
-node dist/index.js
-node dist/index.js design
-node dist/index.js design ui-designer
-node dist/index.js --fields name,description design
+the-agency hire fixtures/agency-agents-mirror
+the-agency
+the-agency design
+the-agency design ui-designer
+the-agency --fields name,description design
 ```
 
 ## Practical Rules

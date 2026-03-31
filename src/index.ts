@@ -115,7 +115,7 @@ async function handleAgencyList(store: LocalStore): Promise<void> {
     type: "agencies",
     message: agencies.length
       ? "These are the agencies currently registered in local storage."
-      : "No agencies are registered yet. Run `agency hire <git-repo>` to add one.",
+      : "No agencies are registered yet. Run `the-agency hire <git-repo>` to add one.",
     currentAgency: data.currentAgency,
     agencies,
   });
@@ -125,7 +125,7 @@ async function handleAgencyUse(store: LocalStore, agencyKey: string): Promise<vo
   const data = await store.load();
   if (!data.agencies[agencyKey]) {
     printJson(
-      buildError(`Agency "${agencyKey}" is not registered locally. Run \`agency agencies list\` to see valid options.`),
+      buildError(`Agency "${agencyKey}" is not registered locally. Run \`the-agency agencies list\` to see valid options.`),
     );
     process.exitCode = 1;
     return;
@@ -185,7 +185,9 @@ async function handleLookup(store: LocalStore, selectors: string[], fields?: str
   const data = await store.load();
   if (!data.currentAgency) {
     printJson(
-      buildError("No agency is active yet. Run `agency hire <git-repo>` or `agency agencies use <agency-key>` first."),
+      buildError(
+        "No agency is active yet. Run `the-agency hire <git-repo>` or `the-agency agencies use <agency-key>` first.",
+      ),
     );
     process.exitCode = 1;
     return;
@@ -195,7 +197,7 @@ async function handleLookup(store: LocalStore, selectors: string[], fields?: str
   if (!agency) {
     printJson(
       buildError(
-        `The active agency "${data.currentAgency}" is missing from local storage. Run \`agency agencies list\` to inspect the registry.`,
+        `The active agency "${data.currentAgency}" is missing from local storage. Run \`the-agency agencies list\` to inspect the registry.`,
       ),
     );
     process.exitCode = 1;
@@ -214,7 +216,7 @@ async function main(): Promise<void> {
   const program = new Command();
 
   program
-    .name("agency")
+    .name("the-agency")
     .description("Hire prompt repositories and resolve prompts from the active agency")
     .showHelpAfterError()
     .option("--fields <fields>", "Comma-separated fields to include in listings or prompt payloads");
@@ -266,7 +268,7 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  const message = error instanceof Error ? error.message : "Unexpected agency CLI failure.";
+  const message = error instanceof Error ? error.message : "Unexpected the-agency CLI failure.";
   printJson(buildError(message));
   process.exitCode = 1;
 });
