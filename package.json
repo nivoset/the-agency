@@ -27,6 +27,7 @@
     "commander": "^14.0.3",
     "git": "^0.1.5",
     "rimraf": "^6.1.3",
+    "the-agency": "link:",
     "typescript": "^6.0.2"
   }
 }
