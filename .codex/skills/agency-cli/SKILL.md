@@ -1,11 +1,11 @@
 ---
 name: agency-cli
-description: Load this skill when you need the exact agency agent for a task; it tells Codex how to hire, browse, and resolve the right prompt fast.
+description: Load when you need the right specialist prompt via the `the-agency` CLI (v2)—hire/browse/resolve; legacy `agency` Python CLI is not used.
 ---
 
-# Agency CLI
+# the-agency (v2)
 
-Use this skill to work with the installed `the-agency` CLI and choose the right prompt from an agency repository.
+Use this skill with the installed **`the-agency`** CLI only. Do not use the retired `agency` *command* or subcommands (`divisions`, `agents`, `prompt`, etc.).
 
 ## Quick Start
 

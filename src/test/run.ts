@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 
+import { DEFAULT_AGENCY_REPO_URL, ensureDefaultLookupAgency } from "../agencyBootstrap.js";
 import { parseFrontmatter } from "../frontmatter.js";
 import { deriveAgencyKey, isLocalDirectorySource, shouldAttemptPull } from "../git.js";
 import { resolveAgencyPath } from "../promptCatalog.js";
@@ -47,6 +49,72 @@ async function testLocalStore(): Promise<void> {
   assert.ok(reloaded.agencies["agency-agents"]);
 }
 
+async function testDefaultAgencyBootstrap(): Promise<void> {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "agency-bootstrap-"));
+  const store = new LocalStore({
+    appDir: tempRoot,
+    reposDir: path.join(tempRoot, "repos"),
+    storeFile: path.join(tempRoot, "store.json"),
+  });
+
+  const bootstrapped = await ensureDefaultLookupAgency(store, {
+    syncRepo: async () => ({
+      didClone: true,
+      didPull: false,
+      pullAttempted: false,
+      pullSucceeded: false,
+      warnings: [],
+    }),
+  });
+
+  assert.ok(bootstrapped);
+  if (bootstrapped) {
+    assert.equal(bootstrapped.repoUrl, DEFAULT_AGENCY_REPO_URL);
+    assert.equal(bootstrapped.agencyKey, "msitarzewski-agency-agents");
+    assert.equal(bootstrapped.record.key, "msitarzewski-agency-agents");
+  }
+
+  const reloaded = await store.load();
+  assert.equal(reloaded.currentAgency, "msitarzewski-agency-agents");
+  assert.ok(reloaded.agencies["msitarzewski-agency-agents"]);
+}
+
+async function testDefaultAgencyBootstrapFailureIsReported(): Promise<void> {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "agency-bootstrap-failure-"));
+  const fakeBinDir = path.join(tempRoot, "bin");
+  await mkdir(fakeBinDir, { recursive: true });
+
+  const fakeGitPath = path.join(fakeBinDir, "git");
+  await writeFile(
+    fakeGitPath,
+    `#!/bin/sh
+printf 'simulated git clone failure\\n' >&2
+exit 1
+`,
+    "utf8",
+  );
+  await chmod(fakeGitPath, 0o755);
+
+  const result = spawnSync(process.execPath, [path.join(process.cwd(), "dist", "index.js")], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      AGENCY_HOME: tempRoot,
+      PATH: `${fakeBinDir}${path.delimiter}${process.env.PATH ?? ""}`,
+    },
+  });
+
+  assert.equal(result.status, 1);
+  const payload = JSON.parse(result.stdout);
+
+  assert.equal(payload.ok, false);
+  assert.equal(payload.type, "error");
+  assert.match(payload.message, /default agency/i);
+  assert.match(payload.message, /simulated git clone failure/);
+  assert.match(payload.message, /the-agency hire/i);
+  assert.match(payload.message, /the-agency agencies use/i);
+}
+
 async function testDefaultStorePathUsesProjectDirectory(): Promise<void> {
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), "agency-cwd-"));
   const originalCwd = process.cwd();
@@ -57,7 +125,7 @@ async function testDefaultStorePathUsesProjectDirectory(): Promise<void> {
 
   const { getDefaultStorePaths } = await import("../store.js");
   const paths = getDefaultStorePaths();
-  assert.equal(paths.appDir, path.join(tempRoot, ".agency"));
+  assert.equal(paths.appDir, path.join(process.cwd(), ".agency"));
 
   process.chdir(originalCwd);
   if (typeof originalHome === "undefined") {
@@ -182,6 +250,8 @@ async function testHelpers(): Promise<void> {
 async function main(): Promise<void> {
   await testParseFrontmatter();
   await testLocalStore();
+  await testDefaultAgencyBootstrap();
+  await testDefaultAgencyBootstrapFailureIsReported();
   await testDefaultStorePathUsesProjectDirectory();
   await testPromptResolution();
   await testRootFilteringUsesGitignoreAndSkipsNoiseFiles();
