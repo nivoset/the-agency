@@ -153,6 +153,7 @@ Behavior details:
 - cached remote repos are refreshed with `git pull --ff-only` at most once every 24 hours
 - if refresh fails, the CLI keeps using the existing local clone and returns a warning
 - hiring a local directory uses that directory in place; no clone or pull is attempted
+- when prompt lookup runs against an empty local store, the CLI automatically registers and activates `https://github.com/msitarzewski/agency-agents.git` as the default agency
 
 ## Prompt Repository Expectations
 
@@ -231,6 +232,7 @@ Lookup returns `No agency is active yet`:
 
 - run `the-agency hire <git-repo-or-local-dir>` first
 - or switch to an existing agency with `the-agency agencies use <agency-key>`
+- if the store is empty, a lookup command will now bootstrap the default agency automatically; this error only appears when agencies already exist but none is active
 
 An agency key is rejected as unknown:
 

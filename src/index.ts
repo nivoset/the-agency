@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 
 import { Command } from "commander";
-import path from "node:path";
 
-import { deriveAgencyKey, ensureRepo, getRepoLocalPath, isLocalDirectorySource } from "./git.js";
+import { ensureDefaultLookupAgency, registerAgency } from "./agencyBootstrap.js";
 import { resolveAgencyPath } from "./promptCatalog.js";
 import { LocalStore } from "./store.js";
 import type { AgencyRecord, ErrorResponse, HireResponse, JsonValue } from "./types.js";
@@ -60,48 +59,22 @@ function buildError(message: string, extras: Partial<ErrorResponse> = {}): Error
 }
 
 async function handleHire(store: LocalStore, repoUrl: string): Promise<void> {
-  const current = await store.load();
-  const now = new Date().toISOString();
-  const isLocalDirectory = await isLocalDirectorySource(repoUrl);
-  const agencyKey = isLocalDirectory ? deriveAgencyKey(path.basename(path.resolve(repoUrl))) : deriveAgencyKey(repoUrl);
-  const existing = current.agencies[agencyKey];
-  const localPath = isLocalDirectory
-    ? path.resolve(repoUrl)
-    : existing?.localPath ?? getRepoLocalPath(store.paths.reposDir, agencyKey);
-  const sync = isLocalDirectory
-    ? {
-        didClone: false,
-        didPull: false,
-        pullAttempted: false,
-        pullSucceeded: false,
-        warnings: [],
-      }
-    : await ensureRepo(repoUrl, localPath, existing?.lastPullAttemptAt);
-
-  const record: AgencyRecord = {
-    key: agencyKey,
-    repoUrl,
-    localPath,
-    addedAt: existing?.addedAt ?? now,
-    updatedAt: now,
-    lastPullAttemptAt: sync.pullAttempted ? now : existing?.lastPullAttemptAt,
-    lastPullSuccessAt: sync.pullSucceeded ? now : existing?.lastPullSuccessAt,
-  };
-
-  await store.upsertAgency(record, true);
+  const prepared = await registerAgency(store, repoUrl, {
+    makeCurrent: true,
+  });
 
   const payload: HireResponse = {
     ok: true,
     type: "hire",
-    message: isLocalDirectory
-      ? `Agency "${agencyKey}" is now active from the local directory source and ready for prompt lookup.`
-      : `Agency "${agencyKey}" is now active and ready for prompt lookup.`,
-    agency: agencyKey,
-    repoUrl,
-    localPath,
-    didClone: sync.didClone,
-    didPull: sync.didPull,
-    warnings: sync.warnings,
+    message: prepared.isLocalDirectory
+      ? `Agency "${prepared.agencyKey}" is now active from the local directory source and ready for prompt lookup.`
+      : `Agency "${prepared.agencyKey}" is now active and ready for prompt lookup.`,
+    agency: prepared.agencyKey,
+    repoUrl: prepared.repoUrl,
+    localPath: prepared.localPath,
+    didClone: prepared.sync.didClone,
+    didPull: prepared.sync.didPull,
+    warnings: prepared.sync.warnings,
   };
   printJson(payload);
 }
@@ -183,23 +156,22 @@ async function handleConfigSet(store: LocalStore, key: string, value: string): P
 
 async function handleLookup(store: LocalStore, selectors: string[], fields?: string[]): Promise<void> {
   const data = await store.load();
-  if (!data.currentAgency) {
-    printJson(
-      buildError(
-        "No agency is active yet. Run `the-agency hire <git-repo>` or `the-agency agencies use <agency-key>` first.",
-      ),
-    );
-    process.exitCode = 1;
-    return;
+  let agency: AgencyRecord | undefined;
+
+  if (data.currentAgency) {
+    agency = data.agencies[data.currentAgency];
+  } else {
+    const bootstrapped = await ensureDefaultLookupAgency(store);
+    if (bootstrapped) {
+      agency = bootstrapped.record;
+    }
   }
 
-  const agency = data.agencies[data.currentAgency];
   if (!agency) {
-    printJson(
-      buildError(
-        `The active agency "${data.currentAgency}" is missing from local storage. Run \`the-agency agencies list\` to inspect the registry.`,
-      ),
-    );
+    const message = data.currentAgency
+      ? `The active agency "${data.currentAgency}" is missing from local storage. Run \`the-agency agencies list\` to inspect the registry.`
+      : "No agency is active yet. Run `the-agency hire <git-repo>` or `the-agency agencies use <agency-key>` first.";
+    printJson(buildError(message));
     process.exitCode = 1;
     return;
   }

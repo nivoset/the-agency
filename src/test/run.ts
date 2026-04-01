@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import { DEFAULT_AGENCY_REPO_URL, ensureDefaultLookupAgency } from "../agencyBootstrap.js";
 import { parseFrontmatter } from "../frontmatter.js";
 import { deriveAgencyKey, isLocalDirectorySource, shouldAttemptPull } from "../git.js";
 import { resolveAgencyPath } from "../promptCatalog.js";
@@ -47,6 +48,36 @@ async function testLocalStore(): Promise<void> {
   assert.ok(reloaded.agencies["agency-agents"]);
 }
 
+async function testDefaultAgencyBootstrap(): Promise<void> {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "agency-bootstrap-"));
+  const store = new LocalStore({
+    appDir: tempRoot,
+    reposDir: path.join(tempRoot, "repos"),
+    storeFile: path.join(tempRoot, "store.json"),
+  });
+
+  const bootstrapped = await ensureDefaultLookupAgency(store, {
+    syncRepo: async () => ({
+      didClone: true,
+      didPull: false,
+      pullAttempted: false,
+      pullSucceeded: false,
+      warnings: [],
+    }),
+  });
+
+  assert.ok(bootstrapped);
+  if (bootstrapped) {
+    assert.equal(bootstrapped.repoUrl, DEFAULT_AGENCY_REPO_URL);
+    assert.equal(bootstrapped.agencyKey, "msitarzewski-agency-agents");
+    assert.equal(bootstrapped.record.key, "msitarzewski-agency-agents");
+  }
+
+  const reloaded = await store.load();
+  assert.equal(reloaded.currentAgency, "msitarzewski-agency-agents");
+  assert.ok(reloaded.agencies["msitarzewski-agency-agents"]);
+}
+
 async function testDefaultStorePathUsesProjectDirectory(): Promise<void> {
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), "agency-cwd-"));
   const originalCwd = process.cwd();
@@ -57,7 +88,7 @@ async function testDefaultStorePathUsesProjectDirectory(): Promise<void> {
 
   const { getDefaultStorePaths } = await import("../store.js");
   const paths = getDefaultStorePaths();
-  assert.equal(paths.appDir, path.join(tempRoot, ".agency"));
+  assert.equal(paths.appDir, path.join(process.cwd(), ".agency"));
 
   process.chdir(originalCwd);
   if (typeof originalHome === "undefined") {
@@ -182,6 +213,7 @@ async function testHelpers(): Promise<void> {
 async function main(): Promise<void> {
   await testParseFrontmatter();
   await testLocalStore();
+  await testDefaultAgencyBootstrap();
   await testDefaultStorePathUsesProjectDirectory();
   await testPromptResolution();
   await testRootFilteringUsesGitignoreAndSkipsNoiseFiles();
