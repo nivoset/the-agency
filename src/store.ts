@@ -7,6 +7,8 @@ import type { AgencyRecord, AgencyStore, JsonValue } from "./types.js";
 const APP_DIR_NAME = ".agency";
 const STORE_FILE_NAME = "store.json";
 const REPOS_DIR_NAME = "repos";
+const CORRUPTED_STORE_RECOVERY_GUIDANCE =
+  "Delete or repair the file, or restore it from backup, then rerun the command.";
 
 export interface StorePaths {
   appDir: string;
@@ -36,6 +38,7 @@ export function createEmptyStore(): AgencyStore {
 
 export class LocalStore {
   public readonly paths: StorePaths;
+  private cachedStore: AgencyStore | undefined;
 
   public constructor(paths: StorePaths = getDefaultStorePaths()) {
     this.paths = paths;
@@ -48,19 +51,26 @@ export class LocalStore {
 
   public async load(): Promise<AgencyStore> {
     await this.ensure();
+    if (this.cachedStore) {
+      return structuredClone(this.cachedStore);
+    }
 
     try {
       const raw = await readFile(this.paths.storeFile, "utf8");
-      const parsed = JSON.parse(raw) as Partial<AgencyStore>;
-      return {
-        config: parsed.config ?? {},
-        currentAgency: parsed.currentAgency ?? null,
-        agencies: parsed.agencies ?? {},
-      };
+      this.cachedStore = this.normalizeStore(JSON.parse(raw) as Partial<AgencyStore>);
+      return structuredClone(this.cachedStore);
     } catch (error) {
       const fileError = error as NodeJS.ErrnoException;
       if (fileError.code === "ENOENT") {
-        return createEmptyStore();
+        this.cachedStore = createEmptyStore();
+        return structuredClone(this.cachedStore);
+      }
+      if (error instanceof SyntaxError) {
+        throw new Error(
+          `Failed to read agency store at "${this.paths.storeFile}": ${error.message}. ` +
+            CORRUPTED_STORE_RECOVERY_GUIDANCE,
+          { cause: error },
+        );
       }
       throw error;
     }
@@ -68,9 +78,11 @@ export class LocalStore {
 
   public async save(store: AgencyStore): Promise<void> {
     await this.ensure();
+    const normalizedStore = this.normalizeStore(store);
     const tempFile = `${this.paths.storeFile}.tmp`;
-    await writeFile(tempFile, `${JSON.stringify(store, null, 2)}\n`, "utf8");
+    await writeFile(tempFile, `${JSON.stringify(normalizedStore, null, 2)}\n`, "utf8");
     await rename(tempFile, this.paths.storeFile);
+    this.cachedStore = structuredClone(normalizedStore);
   }
 
   public async listConfig(): Promise<Record<string, JsonValue>> {
@@ -114,5 +126,14 @@ export class LocalStore {
 
   public async reset(): Promise<void> {
     await rm(this.paths.appDir, { recursive: true, force: true });
+    this.cachedStore = undefined;
+  }
+
+  private normalizeStore(store: Partial<AgencyStore> | null | undefined): AgencyStore {
+    return {
+      config: store?.config ?? {},
+      currentAgency: store?.currentAgency ?? null,
+      agencies: store?.agencies ?? {},
+    };
   }
 }

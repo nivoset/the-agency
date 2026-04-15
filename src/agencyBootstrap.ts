@@ -4,7 +4,7 @@ import { deriveAgencyKey, ensureRepo, getRepoLocalPath, isLocalDirectorySource, 
 import { LocalStore } from "./store.js";
 import type { AgencyRecord } from "./types.js";
 
-export const DEFAULT_AGENCY_REPO_URL = "https://github.com/msitarzewski/agency-agents.git";
+export const DEFAULT_AGENCY_REPO_URL = "https://github.com/nivoset/agency-agents.git";
 
 export interface PreparedAgency {
   agencyKey: string;
@@ -82,4 +82,3 @@ export async function ensureDefaultLookupAgency(
     makeCurrent: true,
   });
 }
-

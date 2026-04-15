@@ -10,7 +10,7 @@ import { deriveAgencyKey, isLocalDirectorySource, shouldAttemptPull } from "../g
 import { resolveAgencyPath } from "../promptCatalog.js";
 import { LocalStore } from "../store.js";
 
-async function testParseFrontmatter(): Promise<void> {
+async function yamlHeaderExtractsNameAndDescription(): Promise<void> {
   const result = parseFrontmatter(`---
 name: UI Designer
 description: Makes interfaces
@@ -23,7 +23,7 @@ description: Makes interfaces
   assert.equal(result.body, "# Prompt body\n");
 }
 
-async function testLocalStore(): Promise<void> {
+async function registeredAgencyPersistsAcrossRestart(): Promise<void> {
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), "agency-store-"));
   const store = new LocalStore({
     appDir: tempRoot,
@@ -49,7 +49,72 @@ async function testLocalStore(): Promise<void> {
   assert.ok(reloaded.agencies["agency-agents"]);
 }
 
-async function testDefaultAgencyBootstrap(): Promise<void> {
+async function corruptedStoreFileExplainsRecoverySteps(): Promise<void> {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "agency-store-corrupt-"));
+  const storeFile = path.join(tempRoot, "store.json");
+  const store = new LocalStore({
+    appDir: tempRoot,
+    reposDir: path.join(tempRoot, "repos"),
+    storeFile,
+  });
+
+  await writeFile(storeFile, '{"config":', "utf8");
+
+  await assert.rejects(store.load(), (error: unknown) => {
+    assert.ok(error instanceof Error);
+    assert.match(error.message, new RegExp(storeFile.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.match(error.message, /delete|remove|restore|recover|fix/i);
+    return true;
+  });
+}
+
+async function cachedStoreReadsSurviveUnreadableBackingFile(): Promise<void> {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "agency-store-cache-"));
+  const storeFile = path.join(tempRoot, "store.json");
+  const timestamp = new Date().toISOString();
+  const store = new LocalStore({
+    appDir: tempRoot,
+    reposDir: path.join(tempRoot, "repos"),
+    storeFile,
+  });
+
+  await writeFile(
+    storeFile,
+    `${JSON.stringify(
+      {
+        config: { currentRepo: "cached" },
+        currentAgency: "agency-agents",
+        agencies: {
+          "agency-agents": {
+            key: "agency-agents",
+            repoUrl: "git@example.com:org/agency-agents.git",
+            localPath: path.join(tempRoot, "repos", "agency-agents"),
+            addedAt: timestamp,
+            updatedAt: timestamp,
+          },
+        },
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+
+  const initial = await store.load();
+  assert.equal(initial.config.currentRepo, "cached");
+
+  try {
+    await chmod(storeFile, 0o000);
+
+    assert.equal(await store.getConfig("currentRepo"), "cached");
+    assert.equal((await store.load()).currentAgency, "agency-agents");
+    assert.ok((await store.listAgencies())["agency-agents"]);
+  } finally {
+    await chmod(storeFile, 0o600).catch(() => undefined);
+  }
+}
+
+async function firstRunAutomaticallyRegistersDefaultAgency(): Promise<void> {
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), "agency-bootstrap-"));
   const store = new LocalStore({
     appDir: tempRoot,
@@ -70,16 +135,16 @@ async function testDefaultAgencyBootstrap(): Promise<void> {
   assert.ok(bootstrapped);
   if (bootstrapped) {
     assert.equal(bootstrapped.repoUrl, DEFAULT_AGENCY_REPO_URL);
-    assert.equal(bootstrapped.agencyKey, "msitarzewski-agency-agents");
-    assert.equal(bootstrapped.record.key, "msitarzewski-agency-agents");
+    assert.equal(bootstrapped.agencyKey, "nivoset-agency-agents");
+    assert.equal(bootstrapped.record.key, "nivoset-agency-agents");
   }
 
   const reloaded = await store.load();
-  assert.equal(reloaded.currentAgency, "msitarzewski-agency-agents");
-  assert.ok(reloaded.agencies["msitarzewski-agency-agents"]);
+  assert.equal(reloaded.currentAgency, "nivoset-agency-agents");
+  assert.ok(reloaded.agencies["nivoset-agency-agents"]);
 }
 
-async function testDefaultAgencyBootstrapFailureIsReported(): Promise<void> {
+async function defaultAgencyBootstrapFailureExplainsRecoveryCommands(): Promise<void> {
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), "agency-bootstrap-failure-"));
   const fakeBinDir = path.join(tempRoot, "bin");
   await mkdir(fakeBinDir, { recursive: true });
@@ -135,7 +200,7 @@ async function testDefaultStorePathUsesProjectDirectory(): Promise<void> {
   }
 }
 
-async function testPromptResolution(): Promise<void> {
+async function selectorPathReturnsMatchingPrompt(): Promise<void> {
   const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agency-repo-"));
   const designDir = path.join(repoRoot, "design");
   const nestedDir = path.join(designDir, "specialists");
@@ -180,6 +245,67 @@ You are the UX researcher.
   }
 }
 
+async function testExactFilenameMatchSkipsUnrelatedPromptReads(): Promise<void> {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agency-repo-"));
+  const designDir = path.join(repoRoot, "design");
+  await mkdir(designDir, { recursive: true });
+
+  await writeFile(
+    path.join(designDir, "exact_match.md"),
+    `---
+name: Exact Match
+description: Readable prompt
+---
+You are the readable prompt.
+`,
+    "utf8",
+  );
+
+  const unreadablePath = path.join(designDir, "unreadable.md");
+  await writeFile(
+    unreadablePath,
+    `---
+name: Unreadable Prompt
+---
+This file should not be read for an exact filename match.
+`,
+    "utf8",
+  );
+  await chmod(unreadablePath, 0o000);
+
+  const resolved = await resolveAgencyPath(repoRoot, "agency-agents", ["design", "exact-match"]);
+  assert.equal(resolved.ok, true);
+  if (resolved.ok && resolved.type === "prompt") {
+    assert.equal(resolved.fileName, "exact_match.md");
+    assert.equal(resolved.matchedBy, "fileName");
+  }
+}
+
+async function testExactFilenameAmbiguityPreservesCandidatesWithoutPromptReads(): Promise<void> {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agency-repo-"));
+  const directoryPath = path.join(repoRoot, "ops-helper");
+  await mkdir(directoryPath, { recursive: true });
+
+  const unreadablePath = path.join(repoRoot, "ops_helper.md");
+  await writeFile(
+    unreadablePath,
+    `---
+name: Ops Helper Prompt
+---
+This file should not be read when an exact filename ambiguity is already known.
+`,
+    "utf8",
+  );
+  await chmod(unreadablePath, 0o000);
+
+  const response = await resolveAgencyPath(repoRoot, "agency-agents", ["ops-helper"]);
+  assert.equal(response.ok, false);
+  if (!response.ok) {
+    assert.ok(response.candidates);
+    assert.deepEqual([...response.candidates].sort(), ["ops-helper", "ops_helper.md"]);
+  }
+}
+
 async function testRootFilteringUsesGitignoreAndSkipsNoiseFiles(): Promise<void> {
   const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agency-repo-"));
   await mkdir(path.join(repoRoot, ".git"), { recursive: true });
@@ -217,7 +343,43 @@ async function testRootFilteringUsesGitignoreAndSkipsNoiseFiles(): Promise<void>
   }
 }
 
-async function testAmbiguity(): Promise<void> {
+async function testListingWithBaseFieldsSkipsPromptReads(): Promise<void> {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agency-repo-"));
+
+  await writeFile(
+    path.join(repoRoot, "visible.md"),
+    `---
+name: Visible Prompt
+description: Readable prompt
+---
+Visible prompt body.
+`,
+    "utf8",
+  );
+
+  const unreadablePath = path.join(repoRoot, "unreadable.md");
+  await writeFile(
+    unreadablePath,
+    `---
+name: Unreadable Prompt
+---
+This file should not be read when only base listing fields are requested.
+`,
+    "utf8",
+  );
+  await chmod(unreadablePath, 0o000);
+
+  const listing = await resolveAgencyPath(repoRoot, "agency-agents", [], ["fileName", "path"]);
+  assert.equal(listing.ok, true);
+  if (listing.ok && listing.type === "listing") {
+    assert.deepEqual(listing.prompts, [
+      { fileName: "unreadable.md", path: "unreadable.md" },
+      { fileName: "visible.md", path: "visible.md" },
+    ]);
+  }
+}
+
+async function unclearSelectorShowsAllPossibleMatches(): Promise<void> {
   const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agency-repo-"));
   const designDir = path.join(repoRoot, "design");
   await mkdir(designDir, { recursive: true });
@@ -233,10 +395,10 @@ async function testAmbiguity(): Promise<void> {
   }
 }
 
-async function testHelpers(): Promise<void> {
+async function helperUtilitiesNormalizeAgencySourceInputs(): Promise<void> {
   assert.equal(
-    deriveAgencyKey("git@github.com:msitarzewski/agency-agents.git"),
-    "msitarzewski-agency-agents",
+    deriveAgencyKey("git@github.com:nivoset/agency-agents.git"),
+    "nivoset-agency-agents",
   );
   const localDir = await mkdtemp(path.join(os.tmpdir(), "agency-source-"));
   assert.equal(await isLocalDirectorySource(localDir), true);
@@ -248,15 +410,20 @@ async function testHelpers(): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  await testParseFrontmatter();
-  await testLocalStore();
-  await testDefaultAgencyBootstrap();
-  await testDefaultAgencyBootstrapFailureIsReported();
+  await yamlHeaderExtractsNameAndDescription();
+  await registeredAgencyPersistsAcrossRestart();
+  await corruptedStoreFileExplainsRecoverySteps();
+  await cachedStoreReadsSurviveUnreadableBackingFile();
+  await firstRunAutomaticallyRegistersDefaultAgency();
+  await defaultAgencyBootstrapFailureExplainsRecoveryCommands();
   await testDefaultStorePathUsesProjectDirectory();
-  await testPromptResolution();
+  await selectorPathReturnsMatchingPrompt();
+  await testExactFilenameMatchSkipsUnrelatedPromptReads();
+  await testExactFilenameAmbiguityPreservesCandidatesWithoutPromptReads();
   await testRootFilteringUsesGitignoreAndSkipsNoiseFiles();
-  await testAmbiguity();
-  await testHelpers();
+  await testListingWithBaseFieldsSkipsPromptReads();
+  await unclearSelectorShowsAllPossibleMatches();
+  await helperUtilitiesNormalizeAgencySourceInputs();
   process.stdout.write("All tests passed.\n");
 }
 
