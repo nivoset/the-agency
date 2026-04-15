@@ -7,7 +7,8 @@
     "dist"
   ],
   "bin": {
-    "the-agency": "./dist/index.js"
+    "the-agency": "./dist/index.js",
+    "agency": "./dist/index.js"
   },
   "scripts": {
     "prebuild": "rimraf dist",

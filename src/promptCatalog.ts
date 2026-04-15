@@ -23,6 +23,8 @@ type IgnoreRule = {
   anchored: boolean;
 };
 
+const globRegexCache = new Map<string, RegExp>();
+
 function normalize(value: string): string {
   return value
     .toLowerCase()
@@ -47,6 +49,99 @@ function pickFields<T extends Record<string, JsonValue>>(record: T, fields?: str
 
 function toPosixPath(value: string): string {
   return value.replace(/\\/g, "/");
+}
+
+function escapeRegexChar(value: string): string {
+  return value.replace(/[|\\{}()[\]^$+?.]/g, "\\$&");
+}
+
+function buildCharacterClass(content: string): string {
+  if (content.length === 0) {
+    return "\\[\\]";
+  }
+
+  const negated = content.startsWith("!");
+  const body = negated ? content.slice(1) : content;
+  if (body.length === 0) {
+    return "\\[\\]";
+  }
+
+  return `[${negated ? "^" : ""}${body.replace(/\\/g, "\\\\").replace(/\]/g, "\\]")}]`;
+}
+
+function buildGlobRegex(pattern: string): RegExp {
+  let source = "";
+
+  for (let index = 0; index < pattern.length; index += 1) {
+    const char = pattern[index];
+    if (char === "\\") {
+      const escaped = pattern[index + 1];
+      if (escaped) {
+        source += escapeRegexChar(escaped);
+        index += 1;
+      } else {
+        source += "\\\\";
+      }
+      continue;
+    }
+    if (char === "*") {
+      const next = pattern[index + 1];
+      const afterNext = pattern[index + 2];
+      if (next === "*") {
+        if (afterNext === "/") {
+          source += "(?:.*\\/)?";
+          index += 2;
+        } else {
+          source += ".*";
+          index += 1;
+        }
+      } else {
+        source += "[^/]*";
+      }
+      continue;
+    }
+    if (char === "?") {
+      source += "[^/]";
+      continue;
+    }
+    if (char === "[") {
+      const closingIndex = pattern.indexOf("]", index + 1);
+      if (closingIndex > index + 1) {
+        source += buildCharacterClass(pattern.slice(index + 1, closingIndex));
+        index = closingIndex;
+        continue;
+      }
+    }
+    source += escapeRegexChar(char);
+  }
+
+  return new RegExp(`^${source}$`);
+}
+
+function matchesGlob(value: string, pattern: string): boolean {
+  const cached = globRegexCache.get(pattern);
+  if (cached) {
+    return cached.test(value);
+  }
+
+  const matcher = typeof path.matchesGlob === "function" ? null : buildGlobRegex(pattern);
+  if (matcher) {
+    globRegexCache.set(pattern, matcher);
+    return matcher.test(value);
+  }
+
+  return path.matchesGlob(value, pattern);
+}
+
+function isPathWithinRoot(rootPath: string, candidatePath: string): boolean {
+  const relative = path.relative(rootPath, candidatePath);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function resolveContainedPath(repoRoot: string, relativePath: string): string | null {
+  const normalizedRoot = path.resolve(repoRoot);
+  const candidate = path.resolve(normalizedRoot, relativePath);
+  return isPathWithinRoot(normalizedRoot, candidate) ? candidate : null;
 }
 
 function parseIgnoreRules(content: string): IgnoreRule[] {
@@ -94,27 +189,27 @@ function matchesRule(relativePath: string, isDirectory: boolean, rule: IgnoreRul
       return normalizedPath === normalizedPattern || normalizedPath.startsWith(`${normalizedPattern}/`);
     }
     if (!normalizedPattern.includes("/")) {
-      return normalizedPath.split("/").some((segment) => path.matchesGlob(segment, normalizedPattern));
+      return normalizedPath.split("/").some((segment) => matchesGlob(segment, normalizedPattern));
     }
     return (
-      path.matchesGlob(normalizedPath, normalizedPattern) ||
-      path.matchesGlob(normalizedPath, `**/${normalizedPattern}`) ||
+      matchesGlob(normalizedPath, normalizedPattern) ||
+      matchesGlob(normalizedPath, `**/${normalizedPattern}`) ||
       normalizedPath.startsWith(`${normalizedPattern}/`) ||
       normalizedPath.includes(`/${normalizedPattern}/`)
     );
   }
 
   if (rule.anchored) {
-    return path.matchesGlob(normalizedPath, normalizedPattern);
+    return matchesGlob(normalizedPath, normalizedPattern);
   }
 
   if (!normalizedPattern.includes("/")) {
-    return path.matchesGlob(basename, normalizedPattern);
+    return matchesGlob(basename, normalizedPattern);
   }
 
   return (
-    path.matchesGlob(normalizedPath, normalizedPattern) ||
-    path.matchesGlob(normalizedPath, `**/${normalizedPattern}`)
+    matchesGlob(normalizedPath, normalizedPattern) ||
+    matchesGlob(normalizedPath, `**/${normalizedPattern}`)
   );
 }
 
@@ -146,14 +241,20 @@ function shouldExcludeRootMarkdown(relativeDir: string, fileName: string): boole
 }
 
 async function getDirectoryItems(repoRoot: string, relativeDir = "", ignoreRules?: IgnoreRule[]): Promise<DirectoryItem[]> {
-  const currentPath = path.join(repoRoot, relativeDir);
+  const currentPath = resolveContainedPath(repoRoot, relativeDir);
+  if (!currentPath) {
+    return [];
+  }
   const entries = await readdir(currentPath, { withFileTypes: true });
   const items: DirectoryItem[] = [];
   const rules = ignoreRules ?? (await loadIgnoreRules(repoRoot));
 
   for (const entry of entries) {
     const relativePath = relativeDir ? path.join(relativeDir, entry.name) : entry.name;
-    const fullPath = path.join(repoRoot, relativePath);
+    const fullPath = resolveContainedPath(repoRoot, relativePath);
+    if (!fullPath) {
+      continue;
+    }
     if (entry.isDirectory()) {
       if (shouldIgnore(relativePath, true, rules)) {
         continue;
@@ -162,7 +263,9 @@ async function getDirectoryItems(repoRoot: string, relativeDir = "", ignoreRules
       continue;
     }
     if (entry.isFile() && entry.name.toLowerCase().endsWith(".md")) {
-      if (shouldIgnore(relativePath, false, rules) || shouldExcludeRootMarkdown(relativeDir, entry.name)) {
+      const ignoredByGitignore = shouldIgnore(relativePath, false, rules);
+      const excludedReadme = shouldExcludeRootMarkdown(relativeDir, entry.name);
+      if (ignoredByGitignore || excludedReadme) {
         continue;
       }
       items.push({
@@ -189,7 +292,21 @@ async function loadPrompt(filePath: string, relativePath: string, fileName: stri
   };
 }
 
+function buildBasePromptSummary(item: Extract<DirectoryItem, { kind: "file" }>): ListingPromptSummary {
+  return {
+    fileName: item.fileName,
+    path: item.relativePath.replace(/\\/g, "/"),
+  };
+}
+
+function requiresPromptFrontmatter(fields?: string[]): boolean {
+  return !fields || fields.some((field) => field !== "fileName" && field !== "path");
+}
+
 async function buildPromptSummary(item: Extract<DirectoryItem, { kind: "file" }>, fields?: string[]): Promise<ListingPromptSummary> {
+  if (!requiresPromptFrontmatter(fields)) {
+    return buildBasePromptSummary(item);
+  }
   const prompt = await loadPrompt(item.fullPath, item.relativePath, item.fileName);
   return {
     fileName: prompt.fileName,
@@ -304,26 +421,37 @@ async function matchSelector(
     return 0;
   };
 
+  const collectBestMatches = (): { matches: DirectoryItem[]; sources: Map<string, string> } => {
+    const matches = Array.from(scoredMatches.values())
+      .filter((match) => match.score === bestScore)
+      .map((match) => {
+        sources.set(match.item.relativePath, match.source);
+        return match.item;
+      });
+    return { matches, sources };
+  };
+
   for (const item of items) {
     updateMatch(item, scoreCandidate(normalize(item.name)), "fileName");
+  }
 
-    if (item.kind === "file") {
-      const prompt = await loadPrompt(item.fullPath, item.relativePath, item.fileName);
-      const frontmatterName = typeof prompt.frontmatter.name === "string" ? prompt.frontmatter.name : undefined;
-      if (frontmatterName) {
-        updateMatch(item, scoreCandidate(normalize(frontmatterName)), "frontmatter.name");
-      }
+  // Exact filename matches already establish the top score, so frontmatter reads cannot improve ranking.
+  if (bestScore === 3) {
+    return collectBestMatches();
+  }
+
+  for (const item of items) {
+    if (item.kind !== "file") {
+      continue;
+    }
+    const prompt = await loadPrompt(item.fullPath, item.relativePath, item.fileName);
+    const frontmatterName = typeof prompt.frontmatter.name === "string" ? prompt.frontmatter.name : undefined;
+    if (frontmatterName) {
+      updateMatch(item, scoreCandidate(normalize(frontmatterName)), "frontmatter.name");
     }
   }
 
-  const matches = Array.from(scoredMatches.values())
-    .filter((match) => match.score === bestScore)
-    .map((match) => {
-      sources.set(match.item.relativePath, match.source);
-      return match.item;
-    });
-
-  return { matches, sources };
+  return collectBestMatches();
 }
 
 export async function resolveAgencyPath(
@@ -364,6 +492,9 @@ export async function resolveAgencyPath(
 
     const [match] = matches;
     if (match.kind === "directory") {
+      if (!resolveContainedPath(repoRoot, match.relativePath)) {
+        return buildError(`Resolved path for "${selector}" escaped the agency root and was rejected.`, undefined, currentDir);
+      }
       currentDir = match.relativePath;
       if (isLast) {
         return buildListing(repoRoot, agency, currentDir, fields);
@@ -377,6 +508,10 @@ export async function resolveAgencyPath(
         undefined,
         currentDir,
       );
+    }
+
+    if (!resolveContainedPath(repoRoot, match.relativePath)) {
+      return buildError(`Resolved path for "${selector}" escaped the agency root and was rejected.`, undefined, currentDir);
     }
 
     const source = sources.get(match.relativePath) ?? "fileName";

@@ -153,7 +153,7 @@ Behavior details:
 - cached remote repos are refreshed with `git pull --ff-only` at most once every 24 hours
 - if refresh fails, the CLI keeps using the existing local clone and returns a warning
 - hiring a local directory uses that directory in place; no clone or pull is attempted
-- when prompt lookup runs against an empty local store, the CLI automatically registers and activates `https://github.com/msitarzewski/agency-agents.git` as the default agency
+- when prompt lookup runs against an empty local store, the CLI automatically registers and activates `https://github.com/nivoset/agency-agents.git` as the default agency
 
 ## Prompt Repository Expectations
 
