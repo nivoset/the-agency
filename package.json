@@ -1,14 +1,14 @@
 {
   "name": "the-agency",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "CLI for hiring and resolving agency prompt repositories",
   "main": "dist/index.js",
   "files": [
     "dist"
   ],
   "bin": {
-    "the-agency": "./dist/index.js",
-    "agency": "./dist/index.js"
+    "the-agency": "dist/index.js",
+    "agency": "dist/index.js"
   },
   "scripts": {
     "prebuild": "rimraf dist",
