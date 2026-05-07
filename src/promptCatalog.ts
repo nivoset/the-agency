@@ -7,6 +7,7 @@ import type {
   JsonValue,
   ListingFolder,
   ListingPromptSummary,
+  ListingReadme,
   ListingResponse,
   PromptFile,
   PromptResponse,
@@ -240,6 +241,105 @@ function shouldExcludeRootMarkdown(relativeDir: string, fileName: string): boole
   return /^(readme|contributing)(?:[._-].+)?\.md$/i.test(fileName);
 }
 
+const CONTEXT_README_FILE_PATTERN = /^readme(?:[._-].+)?\.md$/i;
+const ROOT_DISPLAY_DOCUMENTS = ["roster.md", "readme.md"];
+
+/** Read a conventional README in the listing directory, if present and not gitignored. */
+async function tryReadContextReadme(
+  repoRoot: string,
+  contextPath: string,
+  ignoreRules: IgnoreRule[],
+): Promise<ListingReadme | null> {
+  const currentPath = resolveContainedPath(repoRoot, contextPath);
+  if (!currentPath) {
+    return null;
+  }
+
+  let entries;
+  try {
+    entries = await readdir(currentPath, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+
+  const candidates: string[] = [];
+  for (const entry of entries) {
+    if (!entry.isFile() || !CONTEXT_README_FILE_PATTERN.test(entry.name)) {
+      continue;
+    }
+    const relativeFilePath = contextPath ? path.join(contextPath, entry.name) : entry.name;
+    if (shouldIgnore(relativeFilePath, false, ignoreRules)) {
+      continue;
+    }
+    candidates.push(entry.name);
+  }
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  const chosen =
+    candidates.find((name) => name === "README.md") ??
+    [...candidates].sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" }))[0];
+
+  const relativeChosenPath = contextPath ? path.join(contextPath, chosen) : chosen;
+  const fullPath = resolveContainedPath(repoRoot, relativeChosenPath);
+  if (!fullPath) {
+    return null;
+  }
+
+  try {
+    const content = await readFile(fullPath, "utf8");
+    return {
+      fileName: chosen,
+      path: toPosixPath(relativeChosenPath),
+      content,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function tryReadRootDisplayDocument(repoRoot: string): Promise<ListingReadme | null> {
+  const currentPath = resolveContainedPath(repoRoot, "");
+  if (!currentPath) {
+    return null;
+  }
+
+  const ignoreRules = await loadIgnoreRules(repoRoot);
+  let entries;
+  try {
+    entries = await readdir(currentPath, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+
+  for (const preferredName of ROOT_DISPLAY_DOCUMENTS) {
+    const entry = entries.find((candidate) => candidate.isFile() && candidate.name.toLowerCase() === preferredName);
+    if (!entry || shouldIgnore(entry.name, false, ignoreRules)) {
+      continue;
+    }
+
+    const fullPath = resolveContainedPath(repoRoot, entry.name);
+    if (!fullPath) {
+      continue;
+    }
+
+    try {
+      const content = await readFile(fullPath, "utf8");
+      return {
+        fileName: entry.name,
+        path: entry.name,
+        content,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
+}
+
 async function getDirectoryItems(repoRoot: string, relativeDir = "", ignoreRules?: IgnoreRule[]): Promise<DirectoryItem[]> {
   const currentPath = resolveContainedPath(repoRoot, relativeDir);
   if (!currentPath) {
@@ -337,7 +437,7 @@ async function buildListing(
   );
 
   const humanContext = contextPath ? `under "${contextPath.replace(/\\/g, "/")}"` : "at the repo root";
-  return {
+  const response: ListingResponse = {
     ok: true,
     type: "listing",
     message: `These are the available options ${humanContext}. Choose a subdepartment or prompt file for the next agency command.`,
@@ -346,6 +446,13 @@ async function buildListing(
     subdepartments,
     prompts,
   };
+
+  const readme = await tryReadContextReadme(repoRoot, contextPath, ignoreRules);
+  if (readme) {
+    response.readme = readme;
+  }
+
+  return response;
 }
 
 function buildError(message: string, candidates?: string[], contextPath?: string): ErrorResponse {

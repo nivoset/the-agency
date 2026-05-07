@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { chmod, mkdtemp, mkdir, writeFile } from "node:fs/promises";
-import { spawnSync } from "node:child_process";
+import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 
@@ -331,6 +331,9 @@ async function testRootFilteringUsesGitignoreAndSkipsNoiseFiles(): Promise<void>
       ["team"],
     );
     assert.deepEqual(listing.prompts, []);
+    assert.equal(listing.readme?.fileName, "README.md");
+    assert.equal(listing.readme?.path, "README.md");
+    assert.equal(listing.readme?.content, "# Root readme\n");
   }
 
   const nestedListing = await resolveAgencyPath(repoRoot, "agency-agents", ["team"]);
@@ -339,6 +342,11 @@ async function testRootFilteringUsesGitignoreAndSkipsNoiseFiles(): Promise<void>
     assert.deepEqual(
       nestedListing.prompts.map((item) => item.fileName),
       ["brief.md", "README.md"],
+    );
+    assert.equal(nestedListing.readme?.path, "team/README.md");
+    assert.equal(
+      nestedListing.readme?.content,
+      "---\nname: Nested Readme Prompt\n---\nNested\n",
     );
   }
 }
@@ -356,6 +364,7 @@ Visible prompt body.
 `,
     "utf8",
   );
+  await writeFile(path.join(repoRoot, "README.md"), "# Agency README for listing\n", "utf8");
 
   const unreadablePath = path.join(repoRoot, "unreadable.md");
   await writeFile(
@@ -376,7 +385,128 @@ This file should not be read when only base listing fields are requested.
       { fileName: "unreadable.md", path: "unreadable.md" },
       { fileName: "visible.md", path: "visible.md" },
     ]);
+    assert.equal(listing.readme?.fileName, "README.md");
+    assert.equal(listing.readme?.content, "# Agency README for listing\n");
   }
+}
+
+async function testRootListingOmitsReadmeWhenAbsent(): Promise<void> {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agency-repo-"));
+  await writeFile(
+    path.join(repoRoot, "ops.md"),
+    `---
+name: Ops
+---
+Body
+`,
+    "utf8",
+  );
+
+  const listing = await resolveAgencyPath(repoRoot, "agency-agents", []);
+  assert.equal(listing.ok, true);
+  if (listing.ok && listing.type === "listing") {
+    assert.equal(listing.readme, undefined);
+  }
+}
+
+async function testRootListingOmitsReadmeWhenGitignored(): Promise<void> {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agency-repo-"));
+  await writeFile(path.join(repoRoot, ".gitignore"), "README.md\n", "utf8");
+  await writeFile(path.join(repoRoot, "README.md"), "# Should not be exposed\n", "utf8");
+  await writeFile(path.join(repoRoot, "visible.md"), "---\nname: V\n---\n", "utf8");
+
+  const listing = await resolveAgencyPath(repoRoot, "agency-agents", []);
+  assert.equal(listing.ok, true);
+  if (listing.ok && listing.type === "listing") {
+    assert.equal(listing.readme, undefined);
+    assert.equal(listing.prompts.length, 1);
+  }
+}
+
+async function createActiveAgencyStore(repoRoot: string): Promise<string> {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "agency-cli-home-"));
+  const timestamp = new Date().toISOString();
+  const store = new LocalStore({
+    appDir: tempRoot,
+    reposDir: path.join(tempRoot, "repos"),
+    storeFile: path.join(tempRoot, "store.json"),
+  });
+
+  await store.upsertAgency(
+    {
+      key: "active-agency",
+      repoUrl: repoRoot,
+      localPath: repoRoot,
+      addedAt: timestamp,
+      updatedAt: timestamp,
+    },
+    true,
+  );
+
+  return tempRoot;
+}
+
+function runAgencyCli(args: string[], agencyHome: string): SpawnSyncReturns<string> {
+  return spawnSync(process.execPath, [path.join(process.cwd(), "dist", "index.js"), ...args], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      AGENCY_HOME: agencyHome,
+    },
+  });
+}
+
+async function userSeesRosterWhenOpeningActiveAgencyRoot(): Promise<void> {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agency-repo-"));
+  await writeFile(path.join(repoRoot, "README.md"), "# Agency README\n", "utf8");
+  await writeFile(path.join(repoRoot, "ROSTER.md"), "# Agency Roster\n", "utf8");
+  const agencyHome = await createActiveAgencyStore(repoRoot);
+
+  const result = runAgencyCli([], agencyHome);
+
+  assert.equal(result.status, 0);
+  assert.equal(result.stdout, "# Agency Roster\n");
+}
+
+async function userSeesReadmeWhenRosterIsAbsent(): Promise<void> {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agency-repo-"));
+  await writeFile(path.join(repoRoot, "README.md"), "# Agency README\n", "utf8");
+  const agencyHome = await createActiveAgencyStore(repoRoot);
+
+  const result = runAgencyCli([], agencyHome);
+
+  assert.equal(result.status, 0);
+  assert.equal(result.stdout, "# Agency README\n");
+}
+
+async function userSeesHelpWhenRootDocsAreAbsent(): Promise<void> {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agency-repo-"));
+  await writeFile(path.join(repoRoot, "ops.md"), "---\nname: Ops\n---\nOps prompt\n", "utf8");
+  const agencyHome = await createActiveAgencyStore(repoRoot);
+
+  const result = runAgencyCli([], agencyHome);
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /Usage: the-agency/);
+  assert.match(result.stdout, /Commands:/);
+}
+
+async function userCanRequestJsonWhenOpeningActiveAgencyRoot(): Promise<void> {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "agency-repo-"));
+  await writeFile(path.join(repoRoot, "ROSTER.md"), "# Agency Roster\n", "utf8");
+  await writeFile(path.join(repoRoot, "ops.md"), "---\nname: Ops\n---\nOps prompt\n", "utf8");
+  const agencyHome = await createActiveAgencyStore(repoRoot);
+
+  const result = runAgencyCli(["--json"], agencyHome);
+
+  assert.equal(result.status, 0);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.type, "listing");
+  assert.deepEqual(
+    payload.prompts.map((item: { fileName: string }) => item.fileName).sort(),
+    ["ROSTER.md", "ops.md"].sort(),
+  );
 }
 
 async function unclearSelectorShowsAllPossibleMatches(): Promise<void> {
@@ -422,6 +552,12 @@ async function main(): Promise<void> {
   await testExactFilenameAmbiguityPreservesCandidatesWithoutPromptReads();
   await testRootFilteringUsesGitignoreAndSkipsNoiseFiles();
   await testListingWithBaseFieldsSkipsPromptReads();
+  await testRootListingOmitsReadmeWhenAbsent();
+  await testRootListingOmitsReadmeWhenGitignored();
+  await userSeesRosterWhenOpeningActiveAgencyRoot();
+  await userSeesReadmeWhenRosterIsAbsent();
+  await userSeesHelpWhenRootDocsAreAbsent();
+  await userCanRequestJsonWhenOpeningActiveAgencyRoot();
   await unclearSelectorShowsAllPossibleMatches();
   await helperUtilitiesNormalizeAgencySourceInputs();
   process.stdout.write("All tests passed.\n");

@@ -40,6 +40,13 @@ export interface ListingPromptSummary {
   [key: string]: JsonValue;
 }
 
+/** README text for the current listing directory when a conventional readme file exists and is readable. */
+export interface ListingReadme {
+  fileName: string;
+  path: string;
+  content: string;
+}
+
 export interface ListingResponse {
   ok: true;
   type: "listing";
@@ -48,6 +55,8 @@ export interface ListingResponse {
   contextPath: string;
   subdepartments: ListingFolder[];
   prompts: ListingPromptSummary[];
+  /** Conventional README in the current listing directory, when present and readable. */
+  readme?: ListingReadme;
 }
 
 export interface PromptResponse {

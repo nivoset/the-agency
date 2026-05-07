@@ -3,12 +3,17 @@
 import { Command } from "commander";
 
 import { DEFAULT_AGENCY_REPO_URL, ensureDefaultLookupAgency, registerAgency } from "./agencyBootstrap.js";
-import { resolveAgencyPath } from "./promptCatalog.js";
+import { resolveAgencyPath, tryReadRootDisplayDocument } from "./promptCatalog.js";
 import { LocalStore } from "./store.js";
-import type { AgencyRecord, ErrorResponse, HireResponse, JsonValue } from "./types.js";
+import type { AgencyRecord, ErrorResponse, HireResponse, JsonValue, ListingReadme } from "./types.js";
 
 function printJson(payload: unknown): void {
   process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+}
+
+function printListingReadme(readme: ListingReadme): void {
+  const text = readme.content.replace(/\r\n/g, "\n");
+  process.stdout.write(text.endsWith("\n") ? text : `${text}\n`);
 }
 
 function toJsonValue(input: string): JsonValue {
@@ -154,7 +159,13 @@ async function handleConfigSet(store: LocalStore, key: string, value: string): P
   });
 }
 
-async function handleLookup(store: LocalStore, selectors: string[], fields?: string[]): Promise<void> {
+async function handleLookup(
+  store: LocalStore,
+  selectors: string[],
+  fields: string[] | undefined,
+  asJson: boolean,
+  helpText?: string,
+): Promise<void> {
   const data = await store.load();
   let agency: AgencyRecord | undefined;
 
@@ -187,7 +198,23 @@ async function handleLookup(store: LocalStore, selectors: string[], fields?: str
     return;
   }
 
+  if (!asJson && selectors.length === 0 && !fields) {
+    const displayDocument = await tryReadRootDisplayDocument(agency.localPath);
+    if (displayDocument) {
+      printListingReadme(displayDocument);
+      return;
+    }
+    if (helpText) {
+      process.stdout.write(helpText);
+      return;
+    }
+  }
+
   const response = await resolveAgencyPath(agency.localPath, agency.key, selectors, fields);
+  if (!asJson && response.ok && response.type === "listing" && response.readme) {
+    printListingReadme(response.readme);
+    return;
+  }
   printJson(response);
   if (!response.ok) {
     process.exitCode = 1;
@@ -202,7 +229,8 @@ async function main(): Promise<void> {
     .name("the-agency")
     .description("Hire prompt repositories and resolve prompts from the active agency")
     .showHelpAfterError()
-    .option("--fields <fields>", "Comma-separated fields to include in listings or prompt payloads");
+    .option("--fields <fields>", "Comma-separated fields to include in listings or prompt payloads")
+    .option("--json", "Always emit JSON (skip layer README text on stdout for listings with a README)");
 
   program
     .command("hire")
@@ -243,8 +271,9 @@ async function main(): Promise<void> {
   program
     .argument("[selectors...]", "Folder and prompt selectors for the active agency")
     .action(async (selectors: string[]) => {
-      const fields = parseFields(program.opts<{ fields?: string }>().fields);
-      await handleLookup(store, selectors, fields);
+      const options = program.opts<{ fields?: string; json?: boolean }>();
+      const fields = parseFields(options.fields);
+      await handleLookup(store, selectors, fields, Boolean(options.json), program.helpInformation());
     });
 
   await program.parseAsync(process.argv);
